@@ -7,7 +7,7 @@ Raspberry Pi Zero rig and surfaces standard pandas/numpy/librosa summaries
 This is a data-loading/inspection tool only — no feature extraction
 (gait metrics, loudness, mouth opening, ...) happens here.
 
-Run with: uv run streamlit run dashboard.py
+Run with: uv run streamlit run dashboards/sample_data_exploration.py
 """
 
 import io
@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-DATA_ROOT = Path(__file__).parent / "collected_sample_data"
+DATA_ROOT = Path(__file__).parent.parent / "collected_sample_data"
 MOTION_COLUMNS = ["accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z"]
 INT16_SATURATION = 32767
 

@@ -13,8 +13,8 @@ improve patient stability and voice.
 | Camera | face | `.h264` | mean mouth opening, opening rate, opening variability, opening trend |
 
 Tech stack: Python + [uv](https://docs.astral.sh/uv/), librosa, opencv + mediapipe,
-pandas, numpy, matplotlib. `sample_data_exploration.py` is a Streamlit dashboard
-for raw-data inspection only (no feature extraction).
+pandas, numpy, matplotlib. `dashboards/sample_data_exploration.py` is a Streamlit
+dashboard for raw-data inspection only (no feature extraction).
 
 ---
 
