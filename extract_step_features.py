@@ -14,9 +14,16 @@ import pandas as pd
 from scipy.signal import butter, filtfilt, find_peaks, welch
 
 SENSOR_COLUMNS = ["accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z"]
+ACCEL_COLUMNS = ["accel_x", "accel_y", "accel_z"]
+GYRO_COLUMNS = ["gyro_x", "gyro_y", "gyro_z"]
 INT16_SATURATION = 32767
 
-TARGET_FS = 10.0  # Hz, uniform resampling grid
+# Raw int16 -> physical units. Divisors are the sensor full-scale sensitivities:
+# accel 4096 LSB/g (+/-8 g range), gyro 32.8 LSB/(deg/s) (+/-1000 deg/s range).
+ACCEL_SCALE = 4096.0  # LSB per g
+GYRO_SCALE = 32.8  # LSB per deg/s
+
+TARGET_FS = 50.0  # Hz, uniform resampling grid (matches ~50 Hz capture)
 BAND_LOW, BAND_HIGH = 0.5, 3.0  # Hz, walking step-frequency band
 MIN_STRIDE_TIME_S = 0.3  # ~3 samples at 10 Hz
 ACTIVITY_WINDOW_S = 1.0
@@ -55,6 +62,18 @@ def interpolate_short_clips(df: pd.DataFrame, max_run: int = 2) -> pd.DataFrame:
     return df
 
 
+def to_physical_units(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert raw int16 counts to g (accel) and deg/s (gyro).
+
+    Applied after clip flagging/repair, which must run on raw counts so the
+    int16 saturation limit still corresponds to +/-32767.
+    """
+    df = df.copy()
+    df[ACCEL_COLUMNS] = df[ACCEL_COLUMNS] / ACCEL_SCALE
+    df[GYRO_COLUMNS] = df[GYRO_COLUMNS] / GYRO_SCALE
+    return df
+
+
 def resample_uniform(df: pd.DataFrame, fs: float = TARGET_FS) -> pd.DataFrame:
     t0, t1 = df["time"].iloc[0], df["time"].iloc[-1]
     grid = t0 + np.arange(int((t1 - t0) * fs) + 1) / fs
@@ -87,7 +106,7 @@ def preprocess(path: Path) -> tuple[pd.DataFrame, float, float]:
     raw = load_trial(path)
     clip_fraction = compute_clip_fraction(raw)
     fs_effective = effective_sampling_rate(raw)
-    cleaned = interpolate_short_clips(raw)
+    cleaned = to_physical_units(interpolate_short_clips(raw))
     uniform = add_magnitudes(resample_uniform(cleaned))
     uniform["gyro_mag_band"] = bandpass_filter(uniform["gyro_mag"].to_numpy(), TARGET_FS)
     uniform["accel_mag_band"] = bandpass_filter(uniform["accel_mag"].to_numpy(), TARGET_FS)
