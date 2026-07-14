@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: srh_iot
+      POSTGRES_USER: srh_iot
+      POSTGRES_PASSWORD: development-only-password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.8
+    environment:
+      RUSTFS_ACCESS_KEY: development-access-key
+      RUSTFS_SECRET_KEY: development-secret-key
+    ports:
+      - "9000:9000"
+    volumes:
+      - rustfs-data:/data
+volumes:
+  postgres-data:
+  rustfs-data:

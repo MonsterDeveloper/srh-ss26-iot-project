@@ -16,6 +16,137 @@ Tech stack: Python + [uv](https://docs.astral.sh/uv/), librosa, opencv + mediapi
 pandas, numpy, matplotlib. `dashboards/sample_data_exploration.py` is a Streamlit
 dashboard for raw-data inspection only (no feature extraction).
 
+## Architecture
+
+The FastAPI application in `api/` is the system of record for experiments and
+derived features. PostgreSQL stores metadata and JSONB results; RustFS stores
+the original private media objects. The root extraction modules remain shared
+with the Streamlit dashboards and are imported directly by the API.
+
+```text
+Raspberry Pi / browser
+        │  1. start → presigned PUT URLs
+        ▼
+ FastAPI ────────────────► PostgreSQL
+    │                         experiments, exercises, recordings,
+    │                         manifests, features, errors
+    │  2. direct PUT
+    ▼
+ RustFS (private bucket) ──► temporary worker files ──► root extractors
+        motion.csv / audio.wav / video.h264                │
+                                                          ▼
+                                                canonical JSONB features
+```
+
+Each exercise has at most one recording. A recording owns its status, RustFS
+object manifest, feature JSON, and extractor-error JSON. Deleting derived data
+keeps the source objects so extraction can be retried; deleting an exercise or
+experiment removes its RustFS objects before its database row is deleted.
+
+## API
+
+Interactive OpenAPI documentation is available at `/docs`. All business routes
+require `Authorization: Bearer <API_BEARER_TOKEN>`; only `/`, `/docs`,
+`/openapi.json`, `/health/live`, and `/health/ready` are public.
+
+The primary recording flow is:
+
+1. Create an experiment and an exercise.
+2. `POST /exercises/{id}/recording/start` creates the manifest and returns
+   three 15-minute presigned PUT URLs.
+3. Upload `motion.csv`, `audio.wav`, and `video.h264` directly to RustFS with
+   the returned content types.
+4. `POST /exercises/{id}/recording/stop` verifies object size/type, downloads
+   temporary copies, and runs extraction once outside FastAPI's event loop.
+5. `GET /exercises/{id}/data` and `GET /experiments/{id}/export` read the
+   stored result only; they never re-run extraction.
+
+`/recording/uploads/refresh` refreshes expired PUT URLs without moving the
+objects. `/recording/retry` uses retained source objects for failed or cleared
+results. A successful recording is `completed`, a partial result is
+`completed_with_errors`, and an all-stream failure is `failed`. Invalid state
+transitions return HTTP 409.
+
+The canonical data response contains only stored derived data:
+
+```json
+{
+  "exerciseId": "…",
+  "recordingId": "…",
+  "status": "completed",
+  "features": { "motion": {}, "audio": {}, "video": {} },
+  "errors": {}
+}
+```
+
+Motion includes `walking_speed_cms` and `step_length_cm`, calculated using the
+fixed 14 m route. NaN and infinity values are converted to JSON `null`; errors
+are sanitized and do not expose stack traces or server paths.
+
+## Local development
+
+Install Python 3.14 and [uv](https://docs.astral.sh/uv/). Set the required
+environment variables, then run:
+
+```bash
+uv sync
+docker compose -f compose.dev.yml up -d
+uv run alembic upgrade head
+uv run uvicorn api.server:app --reload
+uv run --group dashboard streamlit run dashboards/features_extraction.py
+```
+
+Required API settings:
+
+| Setting | Purpose |
+|---|---|
+| `API_BEARER_TOKEN` | Bearer token for business routes |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | PostgreSQL connection (the URL is assembled safely in code) |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET`, `S3_REGION` | RustFS S3 credentials and bucket |
+| `S3_PUBLIC_ENDPOINT`, `S3_INTERNAL_ENDPOINT` | Browser-facing and API-internal RustFS endpoints |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated explicit browser-origin allowlist |
+| `ROUTE_DISTANCE_M` | Route distance; defaults to `14` |
+| `PRESIGNED_URL_TTL_SECONDS` | Upload URL lifetime; defaults to `900` |
+| `EXTRACTION_CONCURRENCY` | Process-wide extraction limit; defaults to `1` |
+
+The default object limits are 10 MiB for motion, 64 MiB for audio, and 256 MiB
+for video. RustFS bucket CORS permits PUT requests only from the same explicit
+API CORS allowlist. Do not use wildcard origins or expose the bucket publicly.
+
+## Production deployment
+
+Production is a single AMD64 Linux server deployed exclusively through GitHub
+Actions and Kamal 2. The image runs as a non-root user, applies Alembic
+migrations before starting one Uvicorn worker, and exposes port 8000. Kamal
+Proxy terminates TLS for `API_HOST`, routes readiness checks to `/health/ready`,
+and retains two previous application containers for zero-downtime overlap.
+
+[`config/deploy.yml`](config/deploy.yml) defines the application plus two
+private accessories:
+
+| Service | Image | Persistent host path | Notes |
+|---|---|---|---|
+| PostgreSQL | `postgres:17-alpine` | `/srv/srh-iot/postgres` | Private port 5432; alias `srh-iot-postgres` |
+| RustFS | `rustfs/rustfs:1.0.0-beta.8` | `/srv/srh-iot/rustfs` | Native TLS, port 9000 only, console disabled |
+
+The workflow in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
+uses the GitHub `production` environment and has one deployment job only:
+
+- Pushes to `main` run `kamal deploy -v`.
+- A manual dispatch with `bootstrap=true` prepares the host directories,
+  verifies the certificate directory, then runs `kamal setup -v`.
+- Ruby 3.4, exactly Kamal 2.12.0, strict SSH host verification, and Docker
+  Buildx are configured in the job.
+
+Configure these GitHub secrets: `DEPLOY_SSH_PRIVATE_KEY`,
+`DEPLOY_SSH_KNOWN_HOSTS`, `POSTGRES_PASSWORD`, `RUSTFS_ACCESS_KEY`,
+`RUSTFS_SECRET_KEY`, and `API_BEARER_TOKEN`. Configure these repository
+variables: `API_HOST`, `S3_HOST`, `CORS_ALLOWED_ORIGINS`, and
+`RUSTFS_TLS_CERTS_PATH`. GHCR authentication uses the workflow `GITHUB_TOKEN`.
+
+The RustFS TLS certificate directory, DNS, firewall ports (80, 443, 9000), and
+backups are infrastructure responsibilities outside this repository.
+
 ---
 
 ## IMU feature extraction pipeline (accelerometer + gyroscope)

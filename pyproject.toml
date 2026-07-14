@@ -5,12 +5,23 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.16.5",
+    "boto3>=1.40.0",
+    "fastapi>=0.116.1",
     "librosa>=0.11.0",
-    "matplotlib>=3.11.0",
     "mediapipe>=0.10.35",
     "numpy>=2.4.6",
-    "opencv-python>=4.13.0.92",
     "pandas>=3.0.3",
+    "pydantic-settings>=2.10.1",
+    "psycopg[binary]>=3.2.9",
+    "scipy>=1.16.1",
+    "sqlalchemy>=2.0.43",
     "soundfile>=0.14.0",
+    "uvicorn[standard]>=0.35.0",
+]
+
+[dependency-groups]
+dashboard = [
+    "matplotlib>=3.11.0",
     "streamlit>=1.58.0",
 ]
