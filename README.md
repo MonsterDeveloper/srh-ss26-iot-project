@@ -118,7 +118,8 @@ API CORS allowlist. Do not use wildcard origins or expose the bucket publicly.
 Production is a single AMD64 Linux server deployed exclusively through GitHub
 Actions and Kamal 2. The image runs as a non-root user, applies Alembic
 migrations before starting one Uvicorn worker, and exposes port 8000. Kamal
-Proxy terminates TLS for `API_HOST`, routes readiness checks to `/health/ready`,
+Proxy automatically obtains and terminates TLS for
+`srh-iot-api.ctoofeverything.dev`, routes readiness checks to `/health/ready`,
 and retains two previous application containers for zero-downtime overlap.
 
 [`config/deploy.yml`](config/deploy.yml) defines the application plus two
@@ -128,6 +129,15 @@ private accessories:
 |---|---|---|---|
 | PostgreSQL | `postgres:17-alpine` | `/srv/srh-iot/postgres` | Private port 5432; alias `srh-iot-postgres` |
 | RustFS | `rustfs/rustfs:1.0.0-beta.8` | `/srv/srh-iot/rustfs` | Native TLS, port 9000 only, console disabled |
+
+RustFS is served publicly at `https://srh-iot-media.ctoofeverything.dev`.
+Cloudflare forwards that HTTPS hostname to RustFS on origin port 9000; the API
+uses the private Docker-network endpoint on port 9000. Its certificate files
+are mounted from `/srv/srh-iot/rustfs-tls` as
+`rustfs_cert.pem` and `rustfs_key.pem`; Certbot renewals copy fresh files to
+that directory and restart the RustFS container. Keep the media DNS record
+**proxied** in Cloudflare and configure its Origin Rule to use destination port
+9000. The API host may remain proxied.
 
 The workflow in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
 uses the GitHub `production` environment and has one deployment job only:
