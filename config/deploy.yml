@@ -29,11 +29,7 @@ proxy:
   app_port: 8000
   healthcheck:
     path: /health/ready
-  response_timeout: 300
 
-deploy_timeout: 300
-drain_timeout: 300
-stop_timeout: 300
 retain_containers: 2
 
 env:
