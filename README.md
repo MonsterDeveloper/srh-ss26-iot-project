@@ -151,8 +151,8 @@ uses the GitHub `production` environment and has one deployment job only:
 Configure these GitHub secrets: `DEPLOY_SSH_PRIVATE_KEY`,
 `DEPLOY_SSH_KNOWN_HOSTS`, `POSTGRES_PASSWORD`, `RUSTFS_ACCESS_KEY`,
 `RUSTFS_SECRET_KEY`, and `API_BEARER_TOKEN`. Configure these repository
-variables: `API_HOST`, `S3_HOST`, `CORS_ALLOWED_ORIGINS`, and
-`RUSTFS_TLS_CERTS_PATH`. GHCR authentication uses the workflow `GITHUB_TOKEN`.
+variables: `API_HOST`, `S3_HOST`, and `CORS_ALLOWED_ORIGINS`. GHCR
+authentication uses the workflow `GITHUB_TOKEN`.
 
 The RustFS TLS certificate directory, DNS, firewall ports (80, 443, 9000), and
 backups are infrastructure responsibilities outside this repository.
