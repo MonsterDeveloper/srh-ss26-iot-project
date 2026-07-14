@@ -16,7 +16,6 @@ depends_on = None
 
 def upgrade() -> None:
     recording_status = sa.Enum("idle", "recording", "uploaded", "processing", "completed", "completed_with_errors", "failed", name="recording_status")
-    recording_status.create(op.get_bind(), checkfirst=True)
     op.create_table("experiments", sa.Column("id", sa.String(36), primary_key=True), sa.Column("patient_number", sa.String(255)), sa.Column("height", sa.Float()), sa.Column("age", sa.Integer()), sa.Column("weight", sa.Float()), sa.Column("properties", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")), sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")), sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")))
     op.create_table("exercises", sa.Column("id", sa.String(36), primary_key=True), sa.Column("experiment_id", sa.String(36), sa.ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False), sa.Column("properties", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")), sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")), sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")))
     op.create_index("ix_exercises_experiment_id", "exercises", ["experiment_id"])
