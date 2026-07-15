@@ -16,3 +16,8 @@ wheels/
 *.db
 
 .firecrawl
+.pytest_cache/
+.coverage
+coverage.json
+htmlcov/
+test-results/

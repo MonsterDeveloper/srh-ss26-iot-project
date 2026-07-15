@@ -50,7 +50,16 @@ class Recording(Timestamped, Base):
     __tablename__ = "recordings"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     exercise_id: Mapped[str] = mapped_column(ForeignKey("exercises.id", ondelete="CASCADE"), unique=True, nullable=False)
-    status: Mapped[RecordingStatus] = mapped_column(Enum(RecordingStatus, name="recording_status"), default=RecordingStatus.IDLE, nullable=False)
+    status: Mapped[RecordingStatus] = mapped_column(
+        Enum(
+            RecordingStatus,
+            name="recording_status",
+            values_callable=lambda enum: [member.value for member in enum],
+            validate_strings=True,
+        ),
+        default=RecordingStatus.IDLE,
+        nullable=False,
+    )
     object_manifest: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     features: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     errors: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)

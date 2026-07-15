@@ -5,6 +5,7 @@ import csv
 import io
 import shutil
 import tempfile
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +14,8 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .auth import require_bearer
@@ -21,7 +23,17 @@ from .config import get_settings
 from .database import get_db
 from .models import Exercise, Experiment, Recording, RecordingStatus
 from .pipeline import process_recording
-from .schemas import ExerciseInput, ExperimentInput
+from .schemas import (
+    ErrorResponse,
+    ExerciseInput,
+    ExercisePage,
+    ExerciseResponse,
+    ExperimentInput,
+    ExperimentPage,
+    ExperimentResponse,
+    RecordingDataResponse,
+    UploadResponse,
+)
 from .storage import ObjectStorage
 
 settings = get_settings()
@@ -37,6 +49,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Experiment API (Parkinson's Gait)", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_allowed_origins, allow_credentials=False, allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type"])
 extraction_slots = asyncio.Semaphore(settings.extraction_concurrency)
+recording_start_lock = threading.Lock()
 
 
 def _now() -> datetime:
@@ -68,7 +81,7 @@ def _get_exercise(db: Session, exercise_id: str, *, with_experiment: bool = Fals
 
 def _data_out(exercise: Exercise) -> dict:
     recording = exercise.recording
-    if recording is None or not recording.features:
+    if recording is None or (not recording.features and not recording.errors):
         raise HTTPException(404, "No derived data recorded for this exercise")
     return {"exerciseId": exercise.id, "recordingId": str(recording.id), "status": recording.status.value, "features": recording.features, "errors": recording.errors}
 
@@ -100,33 +113,36 @@ def root() -> dict:
     return {"service": "Experiment API", "docs": "/docs"}
 
 
-@app.post("/experiments", status_code=201, dependencies=[Depends(require_bearer)])
+@app.post("/experiments", status_code=201, response_model=ExperimentResponse, responses={401: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def create_experiment(body: ExperimentInput, db: Session = Depends(get_db)) -> dict:
     item = Experiment(patient_number=body.patientNumber, height=body.height, age=body.age, weight=body.weight, properties=body.properties)
     db.add(item); db.commit(); db.refresh(item)
     return _experiment_out(item)
 
 
-@app.get("/experiments", dependencies=[Depends(require_bearer)])
+@app.get("/experiments", response_model=ExperimentPage, responses={401: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def list_experiments(page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)) -> dict:
     total = db.scalar(select(func.count()).select_from(Experiment)) or 0
     items = db.scalars(select(Experiment).order_by(Experiment.created_at.desc()).offset((page - 1) * pageSize).limit(pageSize)).all()
     return {"items": [_experiment_out(item) for item in items], "page": page, "pageSize": pageSize, "total": total}
 
 
-@app.get("/experiments/{experiment_id}", dependencies=[Depends(require_bearer)])
+@app.get("/experiments/{experiment_id}", response_model=ExperimentResponse, responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def get_experiment(experiment_id: str, db: Session = Depends(get_db)) -> dict:
     item = db.get(Experiment, experiment_id)
-    if item is None: raise HTTPException(404, "Experiment not found")
+    if item is None:
+        raise HTTPException(404, "Experiment not found")
     return _experiment_out(item)
 
 
-@app.patch("/experiments/{experiment_id}", dependencies=[Depends(require_bearer)])
+@app.patch("/experiments/{experiment_id}", response_model=ExperimentResponse, responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def update_experiment(experiment_id: str, body: ExperimentInput, db: Session = Depends(get_db)) -> dict:
     item = db.get(Experiment, experiment_id)
-    if item is None: raise HTTPException(404, "Experiment not found")
+    if item is None:
+        raise HTTPException(404, "Experiment not found")
     for api_name, model_name in {"patientNumber": "patient_number", "height": "height", "age": "age", "weight": "weight", "properties": "properties"}.items():
-        if api_name in body.model_fields_set: setattr(item, model_name, getattr(body, api_name))
+        if api_name in body.model_fields_set:
+            setattr(item, model_name, getattr(body, api_name))
     db.commit(); db.refresh(item)
     return _experiment_out(item)
 
@@ -142,34 +158,37 @@ def _delete_recordings_or_503(records: list[Recording]) -> None:
 @app.delete("/experiments/{experiment_id}", status_code=204, dependencies=[Depends(require_bearer)])
 def delete_experiment(experiment_id: str, db: Session = Depends(get_db)) -> None:
     item = db.scalar(select(Experiment).where(Experiment.id == experiment_id).options(selectinload(Experiment.exercises).selectinload(Exercise.recording)))
-    if item is None: raise HTTPException(404, "Experiment not found")
+    if item is None:
+        raise HTTPException(404, "Experiment not found")
     _delete_recordings_or_503([exercise.recording for exercise in item.exercises if exercise.recording])
     db.delete(item); db.commit()
 
 
-@app.post("/experiments/{experiment_id}/exercises", status_code=201, dependencies=[Depends(require_bearer)])
+@app.post("/experiments/{experiment_id}/exercises", status_code=201, response_model=ExerciseResponse, responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def create_exercise(experiment_id: str, body: ExerciseInput, db: Session = Depends(get_db)) -> dict:
-    if db.get(Experiment, experiment_id) is None: raise HTTPException(404, "Experiment not found")
+    if db.get(Experiment, experiment_id) is None:
+        raise HTTPException(404, "Experiment not found")
     item = Exercise(experiment_id=experiment_id, properties=body.properties)
     db.add(item); db.commit(); db.refresh(item)
     return _exercise_out(item)
 
 
-@app.get("/experiments/{experiment_id}/exercises", dependencies=[Depends(require_bearer)])
+@app.get("/experiments/{experiment_id}/exercises", response_model=list[ExerciseResponse], responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def list_experiment_exercises(experiment_id: str, db: Session = Depends(get_db)) -> list[dict]:
-    if db.get(Experiment, experiment_id) is None: raise HTTPException(404, "Experiment not found")
+    if db.get(Experiment, experiment_id) is None:
+        raise HTTPException(404, "Experiment not found")
     items = db.scalars(select(Exercise).where(Exercise.experiment_id == experiment_id).options(selectinload(Exercise.recording)).order_by(Exercise.created_at.desc())).all()
     return [_exercise_out(item) for item in items]
 
 
-@app.get("/exercises", dependencies=[Depends(require_bearer)])
+@app.get("/exercises", response_model=ExercisePage, responses={401: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def list_exercises(page: int = Query(1, ge=1), pageSize: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)) -> dict:
     total = db.scalar(select(func.count()).select_from(Exercise)) or 0
     items = db.scalars(select(Exercise).options(selectinload(Exercise.recording)).order_by(Exercise.created_at.desc()).offset((page - 1) * pageSize).limit(pageSize)).all()
     return {"items": [_exercise_out(item) for item in items], "page": page, "pageSize": pageSize, "total": total}
 
 
-@app.get("/exercises/{exercise_id}", dependencies=[Depends(require_bearer)])
+@app.get("/exercises/{exercise_id}", response_model=ExerciseResponse, responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def get_exercise(exercise_id: str, db: Session = Depends(get_db)) -> dict:
     return _exercise_out(_get_exercise(db, exercise_id))
 
@@ -177,7 +196,8 @@ def get_exercise(exercise_id: str, db: Session = Depends(get_db)) -> dict:
 @app.delete("/exercises/{exercise_id}", status_code=204, dependencies=[Depends(require_bearer)])
 def delete_exercise(exercise_id: str, db: Session = Depends(get_db)) -> None:
     item = _get_exercise(db, exercise_id)
-    if item.recording: _delete_recordings_or_503([item.recording])
+    if item.recording:
+        _delete_recordings_or_503([item.recording])
     db.delete(item); db.commit()
 
 
@@ -185,22 +205,29 @@ def _urls(recording: Recording) -> dict:
     return {"recordingId": str(recording.id), "status": recording.status.value, "uploads": storage.presigned_put_urls(recording.object_manifest)}
 
 
-@app.post("/exercises/{exercise_id}/recording/start", dependencies=[Depends(require_bearer)])
+@app.post("/exercises/{exercise_id}/recording/start", response_model=UploadResponse, responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def start_recording(exercise_id: str, db: Session = Depends(get_db)) -> dict:
-    exercise = _get_exercise(db, exercise_id, with_experiment=True)
-    if exercise.recording:
-        raise HTTPException(409, "A recording already exists for this exercise")
-    recording = Recording(exercise_id=exercise.id, status=RecordingStatus.RECORDING, started_at=_now())
-    db.add(recording); db.flush()
-    recording.object_manifest = storage.manifest(exercise.experiment_id, exercise.id, str(recording.id))
-    db.commit(); db.refresh(recording)
+    with recording_start_lock:
+        exercise = _get_exercise(db, exercise_id, with_experiment=True)
+        if exercise.recording:
+            raise HTTPException(409, "A recording already exists for this exercise")
+        recording = Recording(exercise_id=exercise.id, status=RecordingStatus.RECORDING, started_at=_now())
+        db.add(recording)
+        try:
+            db.flush()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(409, "A recording already exists for this exercise") from exc
+        recording.object_manifest = storage.manifest(exercise.experiment_id, exercise.id, str(recording.id))
+        db.commit(); db.refresh(recording)
     return _urls(recording)
 
 
-@app.post("/exercises/{exercise_id}/recording/uploads/refresh", dependencies=[Depends(require_bearer)])
+@app.post("/exercises/{exercise_id}/recording/uploads/refresh", response_model=UploadResponse, responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def refresh_uploads(exercise_id: str, db: Session = Depends(get_db)) -> dict:
     recording = _get_exercise(db, exercise_id).recording
-    if recording is None or recording.status is not RecordingStatus.RECORDING: raise HTTPException(409, "Recording is not accepting uploads")
+    if recording is None or recording.status is not RecordingStatus.RECORDING:
+        raise HTTPException(409, "Recording is not accepting uploads")
     return _urls(recording)
 
 
@@ -213,14 +240,23 @@ async def _extract(recording: Recording) -> tuple[dict, dict]:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-async def _process(exercise: Exercise, db: Session) -> dict:
+async def _process(exercise: Exercise, db: Session, allowed_statuses: set[RecordingStatus]) -> dict:
     recording = exercise.recording
     assert recording
     try:
         await run_in_threadpool(storage.head_all, recording.object_manifest)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    recording.status = RecordingStatus.PROCESSING; db.commit()
+    claimed = db.execute(
+        update(Recording)
+        .where(Recording.id == recording.id, Recording.status.in_(allowed_statuses))
+        .values(status=RecordingStatus.PROCESSING)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, "Recording state changed before processing could start")
+    db.commit()
+    db.refresh(recording)
     try:
         async with extraction_slots:
             features, errors = await _extract(recording)
@@ -230,25 +266,29 @@ async def _process(exercise: Exercise, db: Session) -> dict:
     recording.status = RecordingStatus.COMPLETED if len(features) == 3 else (RecordingStatus.COMPLETED_WITH_ERRORS if features else RecordingStatus.FAILED)
     db.commit(); db.refresh(recording)
     response = _data_out(exercise)
-    if recording.status is RecordingStatus.FAILED: raise HTTPException(422, detail=response)
+    if recording.status is RecordingStatus.FAILED:
+        raise HTTPException(422, detail=response)
     return response
 
 
-@app.post("/exercises/{exercise_id}/recording/stop", dependencies=[Depends(require_bearer)])
+@app.post("/exercises/{exercise_id}/recording/stop", response_model=RecordingDataResponse, responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 async def stop_recording(exercise_id: str, db: Session = Depends(get_db)) -> dict:
     exercise = _get_exercise(db, exercise_id)
-    if not exercise.recording or exercise.recording.status is not RecordingStatus.RECORDING: raise HTTPException(409, "Recording is not ready to stop")
-    return await _process(exercise, db)
+    if not exercise.recording or exercise.recording.status is not RecordingStatus.RECORDING:
+        raise HTTPException(409, "Recording is not ready to stop")
+    return await _process(exercise, db, {RecordingStatus.RECORDING})
 
 
-@app.post("/exercises/{exercise_id}/recording/retry", dependencies=[Depends(require_bearer)])
+@app.post("/exercises/{exercise_id}/recording/retry", response_model=RecordingDataResponse, responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}, 422: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 async def retry_recording(exercise_id: str, db: Session = Depends(get_db)) -> dict:
     exercise = _get_exercise(db, exercise_id)
-    if not exercise.recording or exercise.recording.status not in {RecordingStatus.FAILED, RecordingStatus.COMPLETED_WITH_ERRORS, RecordingStatus.UPLOADED}: raise HTTPException(409, "Recording cannot be retried in its current state")
-    return await _process(exercise, db)
+    retryable = {RecordingStatus.FAILED, RecordingStatus.COMPLETED_WITH_ERRORS, RecordingStatus.UPLOADED}
+    if not exercise.recording or exercise.recording.status not in retryable:
+        raise HTTPException(409, "Recording cannot be retried in its current state")
+    return await _process(exercise, db, retryable)
 
 
-@app.get("/exercises/{exercise_id}/data", dependencies=[Depends(require_bearer)])
+@app.get("/exercises/{exercise_id}/data", response_model=RecordingDataResponse, responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse}}, dependencies=[Depends(require_bearer)])
 def get_data(exercise_id: str, db: Session = Depends(get_db)) -> dict:
     return _data_out(_get_exercise(db, exercise_id))
 
@@ -256,15 +296,19 @@ def get_data(exercise_id: str, db: Session = Depends(get_db)) -> dict:
 @app.delete("/exercises/{exercise_id}/data", status_code=204, dependencies=[Depends(require_bearer)])
 def delete_data(exercise_id: str, db: Session = Depends(get_db)) -> None:
     exercise = _get_exercise(db, exercise_id)
-    if not exercise.recording or not exercise.recording.features: raise HTTPException(404, "No derived data recorded for this exercise")
-    exercise.recording.features = {}; exercise.recording.errors = {}; exercise.recording.status = RecordingStatus.UPLOADED
+    if not exercise.recording or not exercise.recording.features:
+        raise HTTPException(404, "No derived data recorded for this exercise")
+    exercise.recording.features = {}
+    exercise.recording.errors = {}
+    exercise.recording.status = RecordingStatus.UPLOADED
     db.commit()
 
 
 @app.get("/experiments/{experiment_id}/export", dependencies=[Depends(require_bearer)])
 def export_experiment(experiment_id: str, db: Session = Depends(get_db)) -> StreamingResponse:
     experiment = db.scalar(select(Experiment).where(Experiment.id == experiment_id).options(selectinload(Experiment.exercises).selectinload(Exercise.recording)))
-    if experiment is None: raise HTTPException(404, "Experiment not found")
+    if experiment is None:
+        raise HTTPException(404, "Experiment not found")
     rows, columns = [], []
     for exercise in experiment.exercises:
         props, recording = exercise.properties, exercise.recording

@@ -79,6 +79,11 @@ The canonical data response contains only stored derived data:
 }
 ```
 
+Experiment measurements are validated as human ranges: height must be greater
+than 0 and at most 300 cm, age must be between 0 and 130 years, and weight must
+be greater than 0 and at most 500 kg. Unknown request fields are rejected so
+client spelling mistakes cannot be silently discarded.
+
 Motion includes `walking_speed_cms` and `step_length_cm`, calculated using the
 fixed 14 m route. NaN and infinity values are converted to JSON `null`; errors
 are sanitized and do not expose stack traces or server paths.
@@ -112,6 +117,37 @@ Required API settings:
 The default object limits are 10 MiB for motion, 64 MiB for audio, and 256 MiB
 for video. RustFS bucket CORS permits PUT requests only from the same explicit
 API CORS allowlist. Do not use wildcard origins or expose the bucket publicly.
+
+## Testing
+
+The API test suite runs without Docker or Testcontainers. It starts a local
+[PGlite](https://pglite.dev/) PostgreSQL-compatible instance in TCP mode,
+migrates it through Alembic, and uses [Moto](https://docs.getmoto.org/) as the
+in-process S3 substitute. FastAPI requests use `TestClient`; no developer
+database, RustFS service, or production environment variables are used.
+
+Install Python 3.14, Node/npm (required by PGlite), and uv, then run:
+
+```bash
+uv sync --group test
+uv run --group test pytest -q tests/test_harness.py
+uv run --group test pytest -ra --tb=short -m "not sample" \
+  --cov=api --cov-branch --cov-report=term-missing
+uv run --group test pytest -ra --tb=short -m sample
+```
+
+The harness test is the infrastructure gate: it verifies Node/npm discovery,
+PGlite startup, the Alembic head revision and schema, Moto bucket/CORS setup,
+and FastAPI lifespan behavior. The sample-marked test catalogs the nine
+read-only motion/audio/video triplets under `collected_sample_data/` and sends
+each through the complete recording API flow. CI runs the same harness and full
+suite in [`.github/workflows/test.yml`](.github/workflows/test.yml).
+
+Tests deliberately assert the intended API contract. A red contract test is
+not skipped, xfailed, or weakened merely because the current implementation
+does not satisfy it. The SQLAlchemy enum binding uses the lowercase values
+defined by the PostgreSQL `recording_status` type, keeping recording creation
+and the recording/export flows aligned with the migration.
 
 ## Production deployment
 

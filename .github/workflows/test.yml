@@ -1,0 +1,31 @@
+name: Test
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg libgl1
+      - run: uv sync --frozen --group test
+      - run: uv run --frozen --group test pytest -q tests/test_harness.py
+      - run: uv run --frozen --group test pytest -ra --tb=short -m "not sample" --cov=api --cov-branch --cov-report=term-missing --cov-fail-under=100
+      - run: uv run --frozen --group test pytest -ra --tb=short -m sample

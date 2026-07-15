@@ -25,3 +25,32 @@ dashboard = [
     "matplotlib>=3.11.0",
     "streamlit>=1.58.0",
 ]
+test = [
+    "httpx2",
+    "moto[s3]==5.2.2",
+    "py-pglite[psycopg,sqlalchemy]==0.5.3",
+    "pytest",
+    "pytest-cov",
+    "pytest-subtests",
+    "pytest-timeout",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--strict-markers --tb=short"
+filterwarnings = [
+    "ignore:aifc was removed in Python 3.13.*:DeprecationWarning:audioread.rawread",
+    "ignore:sunau was removed in Python 3.13.*:DeprecationWarning:audioread.rawread",
+]
+markers = [
+    "sample: all-real-media tests",
+    "integration: FastAPI + PGlite + Moto tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["api"]
+
+[tool.coverage.report]
+fail_under = 100
