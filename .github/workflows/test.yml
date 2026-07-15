@@ -29,3 +29,4 @@ jobs:
       - run: uv run --frozen --group test pytest -q tests/test_harness.py
       - run: uv run --frozen --group test pytest -ra --tb=short -m "not sample" --cov=api --cov-branch --cov-report=term-missing --cov-fail-under=100
       - run: uv run --frozen --group test pytest -ra --tb=short -m sample
+      - run: docker build --platform linux/amd64 --build-arg COMMIT_SHA="$GITHUB_SHA" --tag srh-iot-api:ci .
