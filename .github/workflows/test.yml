@@ -1,6 +1,6 @@
-name: Test
+name: Test PR
 
-on: [push, pull_request]
+on: pull_request
 
 permissions:
   contents: read
@@ -24,7 +24,7 @@ jobs:
       - uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg libgl1 libgles2
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg libegl1 libgl1 libgles2
       - run: uv sync --frozen --group test
       - run: uv run --frozen --group test pytest -q tests/test_harness.py
       - run: uv run --frozen --group test pytest -ra --tb=short -m "not sample" --cov=api --cov-branch --cov-report=term-missing --cov-fail-under=100
