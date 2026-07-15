@@ -26,7 +26,7 @@ def test_all_real_sample_triplets_complete_through_api(client, storage, auth_hea
                 storage.internal.put_object(Bucket=storage.bucket, Key=spec["key"], Body=sample.paths[stream].read_bytes(), ContentType=spec["contentType"])
             response = client.post(f"/exercises/{item['id']}/recording/stop", headers=auth_headers)
             assert response.status_code == 200, response.text
-            data = response.json(); assert data["status"] == "completed" and data["errors"] == {}
+            data = response.json(); assert data["status"] == "completed" and data["errors"] == {}, data
             assert set(data["features"]) == {"motion", "audio", "video"}
             assert client.get(f"/exercises/{item['id']}/data", headers=auth_headers).json() == data
             successes.append(data)
