@@ -18,7 +18,7 @@ registry:
 
 builder:
   arch: amd64
-  context: web-dashboard
+  context: .
   dockerfile: Dockerfile
 
 proxy:
@@ -34,7 +34,6 @@ retain_containers: 2
 env:
   clear:
     API_BASE_URL: https://srh-iot-api.ctoofeverything.dev
-    DASHBOARD_HOST: srh-iot-dashboard.ctoofeverything.dev
     MEDIA_ORIGIN: https://srh-iot-media.ctoofeverything.dev
     NODE_ENV: production
     TZ: Europe/Berlin

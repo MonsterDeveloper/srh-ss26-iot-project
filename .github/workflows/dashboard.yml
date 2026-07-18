@@ -3,9 +3,6 @@ name: Dashboard
 on:
   pull_request:
     paths: ["web-dashboard/**", ".github/workflows/dashboard.yml"]
-  push:
-    branches: [main]
-    paths: ["web-dashboard/**", ".github/workflows/dashboard.yml"]
 
 jobs:
   validate:

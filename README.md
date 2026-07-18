@@ -179,15 +179,24 @@ and the recording/export flows aligned with the migration.
 
 ## Production deployment
 
-Production is a single AMD64 Linux server deployed exclusively through GitHub
-Actions and Kamal 2. The image runs as a non-root user, applies Alembic
-migrations before starting one Uvicorn worker, and exposes port 8000. Kamal
-Proxy automatically obtains and terminates TLS for
-`srh-iot-api.ctoofeverything.dev`, routes readiness checks to `/health/ready`,
-and retains two previous application containers for zero-downtime overlap.
+Production runs two independent Kamal 2 applications on one AMD64 Linux server.
+GitHub Actions validates both codebases, deploys the API first, and deploys the
+dashboard only after the API deployment succeeds. The dashboard uses a normal
+`kamal deploy`; that command also ensures Kamal Proxy is running, so its first
+deployment does not require `kamal setup`.
 
-[`config/deploy.yml`](config/deploy.yml) defines the application plus two
-private accessories:
+| Application | Kamal working directory | Configuration | Image | Public host |
+|---|---|---|---|---|
+| API | repository root | [`config/deploy.yml`](config/deploy.yml) | `ghcr.io/monsterdeveloper/srh-ss26-iot-project` | `srh-iot-api.ctoofeverything.dev` |
+| Dashboard | `web-dashboard` | [`web-dashboard/config/deploy.yml`](web-dashboard/config/deploy.yml) | `ghcr.io/monsterdeveloper/srh-iot-dashboard` | `srh-iot-dashboard.ctoofeverything.dev` |
+
+The API image runs as a non-root user, applies Alembic migrations before
+starting one Uvicorn worker, and exposes port 8000. Kamal Proxy terminates TLS,
+routes readiness checks to `/health/ready`, and retains two previous API
+containers. The dashboard production image runs as the non-root `node` user on
+port 3000, is checked at `/health`, and also retains two previous containers.
+
+The API configuration defines two private accessories:
 
 | Service | Image | Persistent host path | Notes |
 |---|---|---|---|
@@ -204,19 +213,70 @@ that directory and restart the RustFS container. Keep the media DNS record
 9000. The API host may remain proxied.
 
 The workflow in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
-uses the GitHub `production` environment and has one deployment job only:
+uses the GitHub `production` environment:
 
-- Pushes to `main` run `kamal deploy -v`.
+- Every push to `main` first runs the complete API test suite and the dashboard
+  format, lint, type generation, typecheck, and production-build checks.
+- The API job runs from the repository root. A normal deployment uses
+  `kamal deploy -v`.
 - A manual dispatch with `bootstrap=true` prepares the host directories,
-  verifies the certificate directory, then runs `kamal setup -v`.
+  verifies the certificate directory, and runs `kamal setup -v` for the API and
+  its accessories.
+- After the API job succeeds, the dashboard job runs `kamal deploy -v` from
+  `web-dashboard`. An API test, migration, bootstrap, or deployment failure
+  prevents the dashboard deployment.
 - Ruby 3.4, exactly Kamal 2.12.0, strict SSH host verification, and Docker
-  Buildx are configured in the job.
+  Buildx are configured in both deployment jobs. Cancellation handlers release
+  the lock for the service whose working directory the job uses.
 
-Configure these GitHub secrets: `DEPLOY_SSH_PRIVATE_KEY`,
-`DEPLOY_SSH_KNOWN_HOSTS`, `POSTGRES_PASSWORD`, `RUSTFS_ACCESS_KEY`,
-`RUSTFS_SECRET_KEY`, and `API_BEARER_TOKEN`. Configure these repository
-variables: `API_HOST`, `S3_HOST`, and `CORS_ALLOWED_ORIGINS`. GHCR
-authentication uses the workflow `GITHUB_TOKEN`.
+Configure this complete secret inventory in the GitHub `production`
+environment:
+
+| Secret | Used by |
+|---|---|
+| `DEPLOY_SSH_PRIVATE_KEY` | API and dashboard SSH agent |
+| `DEPLOY_SSH_KNOWN_HOSTS` | Strict host-key verification for both deployments |
+| `POSTGRES_PASSWORD` | API and PostgreSQL accessory |
+| `RUSTFS_ACCESS_KEY` | API and RustFS accessory |
+| `RUSTFS_SECRET_KEY` | API and RustFS accessory |
+| `API_BEARER_TOKEN` | Capture/API clients; must be at least 32 characters |
+| `DASHBOARD_API_BEARER_TOKEN` | Shared by the API and dashboard; must be at least 32 characters and differ from `API_BEARER_TOKEN` |
+| `DASHBOARD_SESSION_SECRET` | Dashboard session signing; must be at least 32 characters |
+| `DASHBOARD_USERS_JSON` | Exactly three dashboard login accounts |
+
+`CORS_ALLOWED_ORIGINS` is the sole required configurable GitHub variable. The
+production API, dashboard, and media hostnames are explicit in the Kamal
+configurations. `API_HOST` and `S3_HOST` are not used. GHCR authentication uses
+the workflow's automatic `GITHUB_TOKEN`; it does not need to be added manually.
+
+### First dashboard deployment handoff
+
+1. Add `DASHBOARD_API_BEARER_TOKEN`, `DASHBOARD_SESSION_SECRET`, and
+   `DASHBOARD_USERS_JSON` to the GitHub `production` environment.
+2. Generate the dashboard API token with at least 32 characters, preferably
+   with `openssl rand -hex 32`.
+3. Generate the dashboard session secret independently with
+   `openssl rand -hex 32`.
+4. Generate three Argon2 password hashes locally:
+
+   ```bash
+   cd web-dashboard
+   bun run auth:hash
+   ```
+
+5. Store `DASHBOARD_USERS_JSON` as raw, one-line JSON containing exactly three
+   unique users. Each object must have `username`, `displayName`, and
+   `passwordHash`. Usernames must be lowercase, 3–32 characters, start with a
+   letter, and otherwise contain only lowercase letters, digits, `_`, or `-`.
+6. Confirm `DASHBOARD_API_BEARER_TOKEN` is the same GitHub secret consumed by
+   both deployment jobs and differs from `API_BEARER_TOKEN`.
+7. Preserve the existing SSH, PostgreSQL, RustFS, and API bearer secrets.
+8. Keep `CORS_ALLOWED_ORIGINS`. After this workflow change is merged, remove
+   the unused `API_HOST` and `S3_HOST` GitHub variables.
+9. Confirm dashboard DNS points to `161.35.211.185` and that ports 80 and 443
+   are reachable before merging to `main`.
+10. Merge to `main`. The workflow validates both applications, deploys the API,
+    and then performs the dashboard's first deployment.
 
 The RustFS TLS certificate directory, DNS, firewall ports (80, 443, 9000), and
 backups are infrastructure responsibilities outside this repository.

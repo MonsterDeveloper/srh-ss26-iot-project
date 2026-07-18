@@ -26,9 +26,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
       - uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
@@ -37,6 +35,18 @@ jobs:
       - run: uv run --frozen --group test pytest -q tests/test_harness.py
       - run: uv run --frozen --group test pytest -ra --tb=short -m "not sample" --cov=api --cov-branch --cov-report=term-missing --cov-fail-under=100
       - run: uv run --frozen --group test pytest -ra --tb=short -m sample
+      - run: bun install --frozen-lockfile
+        working-directory: web-dashboard
+      - run: bun run format:check
+        working-directory: web-dashboard
+      - run: bun run lint
+        working-directory: web-dashboard
+      - run: bun run typegen
+        working-directory: web-dashboard
+      - run: bun run typecheck
+        working-directory: web-dashboard
+      - run: bun run build
+        working-directory: web-dashboard
 
   deploy:
     needs: test
@@ -51,11 +61,44 @@ jobs:
       RUSTFS_SECRET_KEY: ${{ secrets.RUSTFS_SECRET_KEY }}
       API_BEARER_TOKEN: ${{ secrets.API_BEARER_TOKEN }}
       DASHBOARD_API_BEARER_TOKEN: ${{ secrets.DASHBOARD_API_BEARER_TOKEN }}
-      API_HOST: ${{ vars.API_HOST }}
-      S3_HOST: ${{ vars.S3_HOST }}
       CORS_ALLOWED_ORIGINS: ${{ vars.CORS_ALLOWED_ORIGINS }}
     steps:
       - uses: actions/checkout@v7.0.0
+      - name: Validate API deployment configuration
+        shell: bash
+        run: |
+          set -u
+          required=(
+            POSTGRES_PASSWORD
+            RUSTFS_ACCESS_KEY
+            RUSTFS_SECRET_KEY
+            API_BEARER_TOKEN
+            DASHBOARD_API_BEARER_TOKEN
+            CORS_ALLOWED_ORIGINS
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required"
+              exit 1
+            fi
+          done
+
+          check_minimum_length() {
+            local name="$1"
+            local minimum="$2"
+            local value="${!name}"
+            if (( ${#value} < minimum )); then
+              echo "::error::$name must contain at least $minimum characters"
+              exit 1
+            fi
+          }
+
+          check_minimum_length API_BEARER_TOKEN 32
+          check_minimum_length DASHBOARD_API_BEARER_TOKEN 32
+          if [[ "$API_BEARER_TOKEN" == "$DASHBOARD_API_BEARER_TOKEN" ]]; then
+            echo "::error::DASHBOARD_API_BEARER_TOKEN must differ from API_BEARER_TOKEN"
+            exit 1
+          fi
       - uses: ruby/setup-ruby@v1.317.0
         with:
           ruby-version: "3.4"
@@ -86,5 +129,76 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || !inputs.bootstrap
         run: kamal deploy -v
       - name: Release Kamal lock after cancellation
+        if: cancelled()
+        run: kamal lock release || true
+
+  deploy-dashboard:
+    needs: deploy
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: web-dashboard
+    env:
+      KAMAL_REGISTRY_USERNAME: ${{ github.actor }}
+      KAMAL_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      DASHBOARD_API_BEARER_TOKEN: ${{ secrets.DASHBOARD_API_BEARER_TOKEN }}
+      DASHBOARD_SESSION_SECRET: ${{ secrets.DASHBOARD_SESSION_SECRET }}
+      DASHBOARD_USERS_JSON: ${{ secrets.DASHBOARD_USERS_JSON }}
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Validate dashboard deployment configuration
+        shell: bash
+        run: |
+          set -u
+          required=(
+            DASHBOARD_API_BEARER_TOKEN
+            DASHBOARD_SESSION_SECRET
+            DASHBOARD_USERS_JSON
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required"
+              exit 1
+            fi
+          done
+
+          check_minimum_length() {
+            local name="$1"
+            local minimum="$2"
+            local value="${!name}"
+            if (( ${#value} < minimum )); then
+              echo "::error::$name must contain at least $minimum characters"
+              exit 1
+            fi
+          }
+
+          check_minimum_length DASHBOARD_API_BEARER_TOKEN 32
+          check_minimum_length DASHBOARD_SESSION_SECRET 32
+          if ! printf '%s' "$DASHBOARD_USERS_JSON" | jq -se 'length == 1' >/dev/null 2>&1; then
+            echo "::error::DASHBOARD_USERS_JSON must be valid JSON"
+            exit 1
+          fi
+      - uses: ruby/setup-ruby@v1.317.0
+        with:
+          ruby-version: "3.4"
+      - run: gem install kamal -v 2.12.0 --no-document
+      - uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+      - name: Configure known hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+        env:
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+      - name: Verify strict SSH connectivity
+        run: ssh -o BatchMode=yes -o StrictHostKeyChecking=yes root@161.35.211.185 true
+      - uses: docker/setup-buildx-action@v4.2.0
+      - name: Deploy dashboard
+        run: kamal deploy -v
+      - name: Release dashboard Kamal lock after cancellation
         if: cancelled()
         run: kamal lock release || true

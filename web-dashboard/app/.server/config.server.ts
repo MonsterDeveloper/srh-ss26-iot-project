@@ -12,7 +12,6 @@ const userSchema = z.object({
 
 const envSchema = z.object({
   API_BASE_URL: z.string().url(),
-  DASHBOARD_HOST: z.string().min(1),
   MEDIA_ORIGIN: z.string().url(),
   DASHBOARD_API_BEARER_TOKEN: z.string().min(32),
   DASHBOARD_SESSION_SECRET: z
@@ -45,7 +44,6 @@ const env = envSchema.parse(process.env);
 
 export const config = Object.freeze({
   apiBaseUrl: env.API_BASE_URL.replace(/\/$/, ""),
-  dashboardHost: env.DASHBOARD_HOST,
   mediaOrigin: env.MEDIA_ORIGIN.replace(/\/$/, ""),
   apiToken: env.DASHBOARD_API_BEARER_TOKEN,
   sessionSecret: env.DASHBOARD_SESSION_SECRET,

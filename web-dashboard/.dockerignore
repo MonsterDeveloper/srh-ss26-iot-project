@@ -6,3 +6,5 @@ README.md
 .env.*
 !.env.example
 .git
+.kamal
+config
