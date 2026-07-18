@@ -8,6 +8,7 @@ import {
   useLoaderData,
   useRouteLoaderData,
 } from "react-router";
+import { Agentation } from "agentation";
 
 import type { Route } from "./+types/root";
 import "./app.css";
@@ -56,6 +57,7 @@ export default function App() {
         <Outlet />
       </div>
       <Toaster position="bottom-right" />
+      {import.meta.env.DEV && <Agentation />}
     </TooltipProvider>
   );
 }
