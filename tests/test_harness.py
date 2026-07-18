@@ -16,7 +16,7 @@ def test_node_and_npm_are_available():
 def test_pglite_and_migration_schema(db_engine):
     with db_engine.connect() as conn:
         assert conn.execute(text("SELECT 1")).scalar() == 1
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260714_0001"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260717_0002"
         tables = set(conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname='public'" )).scalars())
         assert {"experiments", "exercises", "recordings"} <= tables
         assert conn.execute(text("SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname='recording_status')")).scalar()
@@ -26,7 +26,7 @@ def test_pglite_and_migration_schema(db_engine):
 def test_moto_bucket_and_cors(storage):
     storage.ensure_bucket_cors(["http://testserver"])
     cors = storage.internal.get_bucket_cors(Bucket=storage.bucket)
-    assert cors["CORSRules"][0]["AllowedMethods"] == ["PUT"]
+    assert cors["CORSRules"][0]["AllowedMethods"] == ["GET", "HEAD", "PUT"]
 
 
 @pytest.mark.integration

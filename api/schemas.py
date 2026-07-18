@@ -22,6 +22,14 @@ class ExperimentInput(RequestModel):
 
 class ExerciseInput(RequestModel):
     properties: dict = Field(default_factory=dict)
+    condition: str | None = Field(default=None, min_length=1, max_length=64)
+    repetition: int | None = Field(default=None, ge=1)
+
+
+class ExercisePatch(RequestModel):
+    properties: dict | None = None
+    condition: str | None = Field(default=None, min_length=1, max_length=64)
+    repetition: int | None = Field(default=None, ge=1)
 
 
 class ExperimentResponse(BaseModel):
@@ -32,6 +40,11 @@ class ExperimentResponse(BaseModel):
     weight: float | None
     properties: dict
     createdAt: datetime
+    archivedAt: datetime | None
+    archivedBy: str | None
+    exerciseCount: int = 0
+    qualityIssueCount: int = 0
+    statusCounts: dict[str, int] = Field(default_factory=dict)
 
 
 class ExerciseResponse(BaseModel):
@@ -43,6 +56,11 @@ class ExerciseResponse(BaseModel):
     hasData: bool
     properties: dict
     createdAt: datetime
+    condition: str | None
+    repetition: int | None
+    archivedAt: datetime | None
+    archivedBy: str | None
+    qualityIssueCount: int = 0
 
 
 class ExperimentPage(BaseModel):
@@ -71,6 +89,14 @@ class RecordingDataResponse(BaseModel):
     status: RecordingStatus
     features: dict
     errors: dict
+
+
+class MediaLinkResponse(BaseModel):
+    url: str
+    expiry: datetime
+    filename: str
+    contentType: str
+    size: int
 
 
 class ErrorResponse(BaseModel):

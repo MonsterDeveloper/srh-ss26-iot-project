@@ -43,6 +43,11 @@ object manifest, feature JSON, and extractor-error JSON. Deleting derived data
 keeps the source objects so extraction can be retried; deleting an exercise or
 experiment removes its RustFS objects before its database row is deleted.
 
+The dashboard uses a distinct service bearer token. Only that token can trust
+`X-Dashboard-Actor`, access reporting, or request signed downloads; capture-token
+requests are always audited as `api-client`. Archiving retains sources, traces,
+derivatives, and immutable audit history.
+
 ## API
 
 Interactive OpenAPI documentation is available at `/docs`. All business routes
@@ -60,6 +65,11 @@ The primary recording flow is:
    temporary copies, and runs extraction once outside FastAPI's event loop.
 5. `GET /exercises/{id}/data` and `GET /experiments/{id}/export` read the
    stored result only; they never re-run extraction.
+
+Processing stores bounded diagnostic traces and creates a browser-compatible
+`video.mp4` derivative while preserving the original H.264. Dashboard endpoints
+serve metadata, overview metrics, filtered observations, quality issues, audit
+history, traces, and short-lived signed media links.
 
 `/recording/uploads/refresh` refreshes expired PUT URLs without moving the
 objects. `/recording/retry` uses retained source objects for failed or cleared
@@ -106,13 +116,27 @@ Required API settings:
 | Setting | Purpose |
 |---|---|
 | `API_BEARER_TOKEN` | Bearer token for business routes |
+| `DASHBOARD_API_BEARER_TOKEN` | Separate bearer token for the dashboard BFF |
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | PostgreSQL connection (the URL is assembled safely in code) |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET`, `S3_REGION` | RustFS S3 credentials and bucket |
 | `S3_PUBLIC_ENDPOINT`, `S3_INTERNAL_ENDPOINT` | Browser-facing and API-internal RustFS endpoints |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated explicit browser-origin allowlist |
 | `ROUTE_DISTANCE_M` | Route distance; defaults to `14` |
 | `PRESIGNED_URL_TTL_SECONDS` | Upload URL lifetime; defaults to `900` |
+| `PRESIGNED_GET_URL_TTL_SECONDS` | Signed download lifetime; defaults to `60` |
 | `EXTRACTION_CONCURRENCY` | Process-wide extraction limit; defaults to `1` |
+| `EXERCISE_CONDITIONS_JSON` | Optional validated bilingual condition definitions |
+| `QUALITY_IMU_CLIP_FRACTION` | IMU clipping warning threshold; defaults to `0.10` |
+| `QUALITY_FACE_DETECTION_RATIO` | Face coverage warning threshold; defaults to `0.80` |
+| `QUALITY_STALE_MINUTES` | Active-state stale threshold; defaults to `30` |
+
+Backfill existing recordings without replacing valid summary features:
+
+```bash
+uv run backfill-derivatives --dry-run
+uv run backfill-derivatives --limit 25
+uv run backfill-derivatives --recording-id 00000000-0000-0000-0000-000000000000
+```
 
 The default object limits are 10 MiB for motion, 64 MiB for audio, and 256 MiB
 for video. RustFS bucket CORS permits PUT requests only from the same explicit

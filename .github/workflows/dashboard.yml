@@ -1,0 +1,24 @@
+name: Dashboard
+
+on:
+  pull_request:
+    paths: ["web-dashboard/**", ".github/workflows/dashboard.yml"]
+  push:
+    branches: [main]
+    paths: ["web-dashboard/**", ".github/workflows/dashboard.yml"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run format:check
+      - run: bun run lint
+      - run: bun run typegen
+      - run: bun run typecheck
+      - run: bun run build

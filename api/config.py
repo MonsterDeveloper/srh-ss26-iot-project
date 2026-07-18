@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from urllib.parse import quote_plus
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     api_bearer_token: str = Field(min_length=1)
+    dashboard_api_bearer_token: str = Field(min_length=1)
     db_host: str = "localhost"
     db_port: int = 5432
     db_name: str = "srh_iot"
@@ -25,7 +26,12 @@ class Settings(BaseSettings):
     cors_allowed_origins: list[str] | str
     route_distance_m: float = Field(default=14, gt=0)
     presigned_url_ttl_seconds: int = Field(default=900, gt=0)
+    presigned_get_url_ttl_seconds: int = Field(default=60, gt=0, le=3600)
     extraction_concurrency: int = Field(default=1, ge=1)
+    exercise_conditions_json: str | None = None
+    quality_imu_clip_fraction: float = Field(default=0.10, ge=0, le=1)
+    quality_face_detection_ratio: float = Field(default=0.80, ge=0, le=1)
+    quality_stale_minutes: int = Field(default=30, ge=1)
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
@@ -33,6 +39,12 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @model_validator(mode="after")
+    def distinct_tokens(self) -> "Settings":
+        if self.api_bearer_token == self.dashboard_api_bearer_token:
+            raise ValueError("DASHBOARD_API_BEARER_TOKEN must differ from API_BEARER_TOKEN")
+        return self
 
     @property
     def database_url(self) -> str:

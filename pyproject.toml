@@ -20,10 +20,16 @@ dependencies = [
     "uvicorn[standard]>=0.35.0",
 ]
 
+[project.scripts]
+backfill-derivatives = "api.backfill:main"
+
 [dependency-groups]
 dashboard = [
     "matplotlib>=3.11.0",
     "streamlit>=1.58.0",
+]
+dev = [
+    "poethepoet>=0.48.0",
 ]
 test = [
     "httpx2",
@@ -34,6 +40,9 @@ test = [
     "pytest-subtests",
     "pytest-timeout",
 ]
+
+[tool.poe.tasks]
+dev = "uvicorn api.server:app --reload"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
