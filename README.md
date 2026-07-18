@@ -5,6 +5,17 @@ with 3 sensors. The patient wears the setup, walks ~10 m while making wide hand
 movements and repeating the "BA" sound. **Hypothesis:** wide body movements
 improve patient stability and voice.
 
+## Table of Contents
+
+- [Overview](#iot--ai--parkinson-movementvoice-study)
+- [Project structure](#project-structure)
+- [Architecture](#architecture)
+- [API](#api)
+- [Local development](#local-development)
+- [Testing](#testing)
+- [Production deployment](#production-deployment)
+- [IMU feature extraction pipeline](#imu-feature-extraction-pipeline-accelerometer--gyroscope)
+
 | Sensor | Placement | Output | Features |
 |---|---|---|---|
 | Microphone | near the face | `.wav` | mean loudness, vocal activity ratio, loudness variability, loudness trend |
@@ -15,6 +26,23 @@ improve patient stability and voice.
 Tech stack: Python + [uv](https://docs.astral.sh/uv/), librosa, opencv + mediapipe,
 pandas, numpy, matplotlib. `dashboards/sample_data_exploration.py` is a Streamlit
 dashboard for raw-data inspection only (no feature extraction).
+
+The service layer uses FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, and
+RustFS/S3. The production dashboard is a server-rendered React Router 8 BFF
+built with TypeScript, React 19, Bun, Tailwind CSS, Base UI, and Zod.
+
+## Project Structure
+
+- `api/` — FastAPI routes, auth, persistence, S3 access, and processing orchestration.
+- `extract_*_features.py` — reusable motion, audio, and video extractors.
+- `alembic/` — PostgreSQL schema migrations.
+- `dashboards/` — local Streamlit inspection and feature-exploration tools.
+- `web-dashboard/` — the React Router BFF and production research dashboard.
+- `collected_sample_data/` — nine reference sensor triplets used by sample tests.
+- `tests/` — API contract, integration, harness, and real-media tests.
+- `models/` — bundled MediaPipe model assets.
+- `docker-compose.dev.yml` — local PostgreSQL and RustFS services.
+- `config/`, `.kamal/`, and `.github/workflows/` — deployment and CI automation.
 
 ## Architecture
 
@@ -105,11 +133,22 @@ environment variables, then run:
 
 ```bash
 uv sync
-docker compose -f compose.dev.yml up -d
+docker compose -f docker-compose.dev.yml up -d
 uv run alembic upgrade head
 uv run uvicorn api.server:app --reload
 uv run --group dashboard streamlit run dashboards/features_extraction.py
 ```
+
+Run the production dashboard separately:
+
+```bash
+cd web-dashboard
+bun install --frozen-lockfile
+bun dev
+```
+
+Dashboard setup, environment variables, and validation commands are documented
+in [`web-dashboard/README.md`](web-dashboard/README.md).
 
 Required API settings:
 
@@ -261,7 +300,7 @@ the workflow's automatic `GITHUB_TOKEN`; it does not need to be added manually.
 
    ```bash
    cd web-dashboard
-   bun run auth:hash
+   bun auth:hash
    ```
 
 5. Store `DASHBOARD_USERS_JSON` as raw, one-line JSON containing exactly three

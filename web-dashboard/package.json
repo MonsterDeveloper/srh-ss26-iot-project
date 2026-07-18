@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "auth:hash": "bun run scripts/hash-password.ts",
+    "auth:hash": "bun scripts/hash-password.ts",
     "build": "react-router build",
     "dev": "react-router dev --host 0.0.0.0",
     "format": "prettier --write .",
