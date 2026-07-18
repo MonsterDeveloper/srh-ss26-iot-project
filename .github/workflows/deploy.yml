@@ -20,7 +20,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -48,9 +48,10 @@ jobs:
       - run: bun run build
         working-directory: web-dashboard
 
-  deploy:
+  deploy-api:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: production
     env:
       KAMAL_REGISTRY_USERNAME: ${{ github.actor }}
@@ -133,8 +134,9 @@ jobs:
         run: kamal lock release || true
 
   deploy-dashboard:
-    needs: deploy
+    needs: deploy-api
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: production
     defaults:
       run:
