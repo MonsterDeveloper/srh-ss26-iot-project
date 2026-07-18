@@ -30,3 +30,18 @@ jobs:
       - run: uv run --frozen --group test pytest -ra --tb=short -m "not sample" --cov=api --cov-branch --cov-report=term-missing --cov-fail-under=100
       - run: uv run --frozen --group test pytest -ra --tb=short -m sample
       - run: docker build --platform linux/amd64 --build-arg COMMIT_SHA="$GITHUB_SHA" --tag srh-iot-api:ci .
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun format:check
+      - run: bun lint
+      - run: bun typegen
+      - run: bun typecheck
+      - run: bun run build

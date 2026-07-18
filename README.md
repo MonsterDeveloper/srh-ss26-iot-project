@@ -204,7 +204,7 @@ PGlite startup, the Alembic head revision and schema, Moto bucket/CORS setup,
 and FastAPI lifespan behavior. The sample-marked test catalogs the nine
 read-only motion/audio/video triplets under `collected_sample_data/` and sends
 each through the complete recording API flow. CI runs the same harness and full
-suite in [`.github/workflows/test.yml`](.github/workflows/test.yml). Pull-request
+suite in [`.github/workflows/test-pr.yml`](.github/workflows/test-pr.yml). Pull-request
 CI also builds the AMD64 production image and initializes MediaPipe's face
 landmarker inside it as the non-root application user. This image-level gate
 covers the native runtime libraries and bundled landmarker model that host-level
