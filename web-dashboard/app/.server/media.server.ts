@@ -26,8 +26,10 @@ export async function getMediaRedirect(
       schema: linkSchema,
     },
   );
-  const url = new URL(media.url);
-  if (url.origin !== config.mediaOrigin)
-    throw new Response("Invalid media origin", { status: 502 });
-  return media;
+  const sourceUrl = new URL(media.url);
+  const url = new URL(
+    `${sourceUrl.pathname}${sourceUrl.search}${sourceUrl.hash}`,
+    config.mediaOrigin,
+  );
+  return { ...media, url: url.toString() };
 }

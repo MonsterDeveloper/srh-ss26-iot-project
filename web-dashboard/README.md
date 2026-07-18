@@ -20,5 +20,6 @@ CI runs `bun run format:check`, `bun run lint`, `bun run typegen`, `bun run type
 - The session cookie is host-only, HTTP-only, SameSite Lax, and secure in production.
 - Authenticated responses are private and not cacheable.
 - The service requires the dashboard-specific API token, distinct from capture clients.
-- Media resource routes validate the configured RustFS origin before redirecting.
+- Media resource routes replace the API-provided URL origin with `MEDIA_ORIGIN`
+  before redirecting, while preserving the signed path and query string.
 - Screens narrower than 1024 px receive a desktop-required notice.
