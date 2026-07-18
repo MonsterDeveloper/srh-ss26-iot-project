@@ -10,6 +10,7 @@ from collections.abc import Generator
 # These assignments deliberately precede every application import.
 _ENV = {
     "API_BEARER_TOKEN": "test-token",
+    "DASHBOARD_API_BEARER_TOKEN": "test-dashboard-token",
     "DB_PASSWORD": "test-password",
     "S3_ACCESS_KEY_ID": "testing",
     "S3_SECRET_ACCESS_KEY": "testing",
@@ -57,7 +58,7 @@ def db_engine(pglite_sqlalchemy_manager):
 @pytest.fixture(autouse=True)
 def clean_database(db_engine):
     with db_engine.begin() as connection:
-        connection.execute(text("TRUNCATE recordings, exercises, experiments RESTART IDENTITY CASCADE"))
+        connection.execute(text("TRUNCATE audit_events, recordings, exercises, experiments RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture

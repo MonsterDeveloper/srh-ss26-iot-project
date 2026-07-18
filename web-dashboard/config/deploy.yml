@@ -1,0 +1,43 @@
+service: srh-iot-dashboard
+image: monsterdeveloper/srh-iot-dashboard
+
+servers:
+  web:
+    hosts:
+      - 161.35.211.185
+
+ssh:
+  user: root
+
+registry:
+  server: ghcr.io
+  username:
+    - KAMAL_REGISTRY_USERNAME
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+  context: .
+  dockerfile: Dockerfile
+
+proxy:
+  host: srh-iot-dashboard.ctoofeverything.dev
+  ssl: true
+  forward_headers: true
+  app_port: 3000
+  healthcheck:
+    path: /health
+
+retain_containers: 2
+
+env:
+  clear:
+    API_BASE_URL: https://srh-iot-api.ctoofeverything.dev
+    MEDIA_ORIGIN: https://srh-iot-media.ctoofeverything.dev
+    NODE_ENV: production
+    TZ: Europe/Berlin
+  secret:
+    - DASHBOARD_USERS_JSON
+    - DASHBOARD_SESSION_SECRET
+    - DASHBOARD_API_BEARER_TOKEN

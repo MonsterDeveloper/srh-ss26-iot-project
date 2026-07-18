@@ -5,6 +5,17 @@ with 3 sensors. The patient wears the setup, walks ~10 m while making wide hand
 movements and repeating the "BA" sound. **Hypothesis:** wide body movements
 improve patient stability and voice.
 
+## Table of Contents
+
+- [Overview](#iot--ai--parkinson-movementvoice-study)
+- [Project structure](#project-structure)
+- [Architecture](#architecture)
+- [API](#api)
+- [Local development](#local-development)
+- [Testing](#testing)
+- [Production deployment](#production-deployment)
+- [IMU feature extraction pipeline](#imu-feature-extraction-pipeline-accelerometer--gyroscope)
+
 | Sensor | Placement | Output | Features |
 |---|---|---|---|
 | Microphone | near the face | `.wav` | mean loudness, vocal activity ratio, loudness variability, loudness trend |
@@ -15,6 +26,23 @@ improve patient stability and voice.
 Tech stack: Python + [uv](https://docs.astral.sh/uv/), librosa, opencv + mediapipe,
 pandas, numpy, matplotlib. `dashboards/sample_data_exploration.py` is a Streamlit
 dashboard for raw-data inspection only (no feature extraction).
+
+The service layer uses FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, and
+RustFS/S3. The production dashboard is a server-rendered React Router 8 BFF
+built with TypeScript, React 19, Bun, Tailwind CSS, Base UI, and Zod.
+
+## Project Structure
+
+- `api/` — FastAPI routes, auth, persistence, S3 access, and processing orchestration.
+- `extract_*_features.py` — reusable motion, audio, and video extractors.
+- `alembic/` — PostgreSQL schema migrations.
+- `dashboards/` — local Streamlit inspection and feature-exploration tools.
+- `web-dashboard/` — the React Router BFF and production research dashboard.
+- `collected_sample_data/` — nine reference sensor triplets used by sample tests.
+- `tests/` — API contract, integration, harness, and real-media tests.
+- `models/` — bundled MediaPipe model assets.
+- `docker-compose.dev.yml` — local PostgreSQL and RustFS services.
+- `config/`, `.kamal/`, and `.github/workflows/` — deployment and CI automation.
 
 ## Architecture
 
@@ -43,6 +71,11 @@ object manifest, feature JSON, and extractor-error JSON. Deleting derived data
 keeps the source objects so extraction can be retried; deleting an exercise or
 experiment removes its RustFS objects before its database row is deleted.
 
+The dashboard uses a distinct service bearer token. Only that token can trust
+`X-Dashboard-Actor`, access reporting, or request signed downloads; capture-token
+requests are always audited as `api-client`. Archiving retains sources, traces,
+derivatives, and immutable audit history.
+
 ## API
 
 Interactive OpenAPI documentation is available at `/docs`. All business routes
@@ -60,6 +93,11 @@ The primary recording flow is:
    temporary copies, and runs extraction once outside FastAPI's event loop.
 5. `GET /exercises/{id}/data` and `GET /experiments/{id}/export` read the
    stored result only; they never re-run extraction.
+
+Processing stores bounded diagnostic traces and creates a browser-compatible
+`video.mp4` derivative while preserving the original H.264. Dashboard endpoints
+serve metadata, overview metrics, filtered observations, quality issues, audit
+history, traces, and short-lived signed media links.
 
 `/recording/uploads/refresh` refreshes expired PUT URLs without moving the
 objects. `/recording/retry` uses retained source objects for failed or cleared
@@ -95,24 +133,49 @@ environment variables, then run:
 
 ```bash
 uv sync
-docker compose -f compose.dev.yml up -d
+docker compose -f docker-compose.dev.yml up -d
 uv run alembic upgrade head
 uv run uvicorn api.server:app --reload
 uv run --group dashboard streamlit run dashboards/features_extraction.py
 ```
+
+Run the production dashboard separately:
+
+```bash
+cd web-dashboard
+bun install --frozen-lockfile
+bun dev
+```
+
+Dashboard setup, environment variables, and validation commands are documented
+in [`web-dashboard/README.md`](web-dashboard/README.md).
 
 Required API settings:
 
 | Setting | Purpose |
 |---|---|
 | `API_BEARER_TOKEN` | Bearer token for business routes |
+| `DASHBOARD_API_BEARER_TOKEN` | Separate bearer token for the dashboard BFF |
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | PostgreSQL connection (the URL is assembled safely in code) |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET`, `S3_REGION` | RustFS S3 credentials and bucket |
 | `S3_PUBLIC_ENDPOINT`, `S3_INTERNAL_ENDPOINT` | Browser-facing and API-internal RustFS endpoints |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated explicit browser-origin allowlist |
 | `ROUTE_DISTANCE_M` | Route distance; defaults to `14` |
 | `PRESIGNED_URL_TTL_SECONDS` | Upload URL lifetime; defaults to `900` |
+| `PRESIGNED_GET_URL_TTL_SECONDS` | Signed download lifetime; defaults to `60` |
 | `EXTRACTION_CONCURRENCY` | Process-wide extraction limit; defaults to `1` |
+| `EXERCISE_CONDITIONS_JSON` | Optional validated bilingual condition definitions |
+| `QUALITY_IMU_CLIP_FRACTION` | IMU clipping warning threshold; defaults to `0.10` |
+| `QUALITY_FACE_DETECTION_RATIO` | Face coverage warning threshold; defaults to `0.80` |
+| `QUALITY_STALE_MINUTES` | Active-state stale threshold; defaults to `30` |
+
+Backfill existing recordings without replacing valid summary features:
+
+```bash
+uv run backfill-derivatives --dry-run
+uv run backfill-derivatives --limit 25
+uv run backfill-derivatives --recording-id 00000000-0000-0000-0000-000000000000
+```
 
 The default object limits are 10 MiB for motion, 64 MiB for audio, and 256 MiB
 for video. RustFS bucket CORS permits PUT requests only from the same explicit
@@ -141,7 +204,7 @@ PGlite startup, the Alembic head revision and schema, Moto bucket/CORS setup,
 and FastAPI lifespan behavior. The sample-marked test catalogs the nine
 read-only motion/audio/video triplets under `collected_sample_data/` and sends
 each through the complete recording API flow. CI runs the same harness and full
-suite in [`.github/workflows/test.yml`](.github/workflows/test.yml). Pull-request
+suite in [`.github/workflows/test-pr.yml`](.github/workflows/test-pr.yml). Pull-request
 CI also builds the AMD64 production image and initializes MediaPipe's face
 landmarker inside it as the non-root application user. This image-level gate
 covers the native runtime libraries and bundled landmarker model that host-level
@@ -155,15 +218,24 @@ and the recording/export flows aligned with the migration.
 
 ## Production deployment
 
-Production is a single AMD64 Linux server deployed exclusively through GitHub
-Actions and Kamal 2. The image runs as a non-root user, applies Alembic
-migrations before starting one Uvicorn worker, and exposes port 8000. Kamal
-Proxy automatically obtains and terminates TLS for
-`srh-iot-api.ctoofeverything.dev`, routes readiness checks to `/health/ready`,
-and retains two previous application containers for zero-downtime overlap.
+Production runs two independent Kamal 2 applications on one AMD64 Linux server.
+GitHub Actions validates both codebases, deploys the API first, and deploys the
+dashboard only after the API deployment succeeds. The dashboard uses a normal
+`kamal deploy`; that command also ensures Kamal Proxy is running, so its first
+deployment does not require `kamal setup`.
 
-[`config/deploy.yml`](config/deploy.yml) defines the application plus two
-private accessories:
+| Application | Kamal working directory | Configuration | Image | Public host |
+|---|---|---|---|---|
+| API | repository root | [`config/deploy.yml`](config/deploy.yml) | `ghcr.io/monsterdeveloper/srh-ss26-iot-project` | `srh-iot-api.ctoofeverything.dev` |
+| Dashboard | `web-dashboard` | [`web-dashboard/config/deploy.yml`](web-dashboard/config/deploy.yml) | `ghcr.io/monsterdeveloper/srh-iot-dashboard` | `srh-iot-dashboard.ctoofeverything.dev` |
+
+The API image runs as a non-root user, applies Alembic migrations before
+starting one Uvicorn worker, and exposes port 8000. Kamal Proxy terminates TLS,
+routes readiness checks to `/health/ready`, and retains two previous API
+containers. The dashboard production image runs as the non-root `node` user on
+port 3000, is checked at `/health`, and also retains two previous containers.
+
+The API configuration defines two private accessories:
 
 | Service | Image | Persistent host path | Notes |
 |---|---|---|---|
@@ -180,19 +252,70 @@ that directory and restart the RustFS container. Keep the media DNS record
 9000. The API host may remain proxied.
 
 The workflow in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
-uses the GitHub `production` environment and has one deployment job only:
+uses the GitHub `production` environment:
 
-- Pushes to `main` run `kamal deploy -v`.
+- Every push to `main` first runs the complete API test suite and the dashboard
+  format, lint, type generation, typecheck, and production-build checks.
+- The API job runs from the repository root. A normal deployment uses
+  `kamal deploy -v`.
 - A manual dispatch with `bootstrap=true` prepares the host directories,
-  verifies the certificate directory, then runs `kamal setup -v`.
+  verifies the certificate directory, and runs `kamal setup -v` for the API and
+  its accessories.
+- After the API job succeeds, the dashboard job runs `kamal deploy -v` from
+  `web-dashboard`. An API test, migration, bootstrap, or deployment failure
+  prevents the dashboard deployment.
 - Ruby 3.4, exactly Kamal 2.12.0, strict SSH host verification, and Docker
-  Buildx are configured in the job.
+  Buildx are configured in both deployment jobs. Cancellation handlers release
+  the lock for the service whose working directory the job uses.
 
-Configure these GitHub secrets: `DEPLOY_SSH_PRIVATE_KEY`,
-`DEPLOY_SSH_KNOWN_HOSTS`, `POSTGRES_PASSWORD`, `RUSTFS_ACCESS_KEY`,
-`RUSTFS_SECRET_KEY`, and `API_BEARER_TOKEN`. Configure these repository
-variables: `API_HOST`, `S3_HOST`, and `CORS_ALLOWED_ORIGINS`. GHCR
-authentication uses the workflow `GITHUB_TOKEN`.
+Configure this complete secret inventory in the GitHub `production`
+environment:
+
+| Secret | Used by |
+|---|---|
+| `DEPLOY_SSH_PRIVATE_KEY` | API and dashboard SSH agent |
+| `DEPLOY_SSH_KNOWN_HOSTS` | Strict host-key verification for both deployments |
+| `POSTGRES_PASSWORD` | API and PostgreSQL accessory |
+| `RUSTFS_ACCESS_KEY` | API and RustFS accessory |
+| `RUSTFS_SECRET_KEY` | API and RustFS accessory |
+| `API_BEARER_TOKEN` | Capture/API clients; must be at least 32 characters |
+| `DASHBOARD_API_BEARER_TOKEN` | Shared by the API and dashboard; must be at least 32 characters and differ from `API_BEARER_TOKEN` |
+| `DASHBOARD_SESSION_SECRET` | Dashboard session signing; must be at least 32 characters |
+| `DASHBOARD_USERS_JSON` | Exactly three dashboard login accounts |
+
+`CORS_ALLOWED_ORIGINS` is the sole required configurable GitHub variable. The
+production API, dashboard, and media hostnames are explicit in the Kamal
+configurations. `API_HOST` and `S3_HOST` are not used. GHCR authentication uses
+the workflow's automatic `GITHUB_TOKEN`; it does not need to be added manually.
+
+### First dashboard deployment handoff
+
+1. Add `DASHBOARD_API_BEARER_TOKEN`, `DASHBOARD_SESSION_SECRET`, and
+   `DASHBOARD_USERS_JSON` to the GitHub `production` environment.
+2. Generate the dashboard API token with at least 32 characters, preferably
+   with `openssl rand -hex 32`.
+3. Generate the dashboard session secret independently with
+   `openssl rand -hex 32`.
+4. Generate three Argon2 password hashes locally:
+
+   ```bash
+   cd web-dashboard
+   bun auth:hash
+   ```
+
+5. Store `DASHBOARD_USERS_JSON` as raw, one-line JSON containing exactly three
+   unique users. Each object must have `username`, `displayName`, and
+   `passwordHash`. Usernames must be lowercase, 3–32 characters, start with a
+   letter, and otherwise contain only lowercase letters, digits, `_`, or `-`.
+6. Confirm `DASHBOARD_API_BEARER_TOKEN` is the same GitHub secret consumed by
+   both deployment jobs and differs from `API_BEARER_TOKEN`.
+7. Preserve the existing SSH, PostgreSQL, RustFS, and API bearer secrets.
+8. Keep `CORS_ALLOWED_ORIGINS`. After this workflow change is merged, remove
+   the unused `API_HOST` and `S3_HOST` GitHub variables.
+9. Confirm dashboard DNS points to `161.35.211.185` and that ports 80 and 443
+   are reachable before merging to `main`.
+10. Merge to `main`. The workflow validates both applications, deploys the API,
+    and then performs the dashboard's first deployment.
 
 The RustFS TLS certificate directory, DNS, firewall ports (80, 443, 9000), and
 backups are infrastructure responsibilities outside this repository.

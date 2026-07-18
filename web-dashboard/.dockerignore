@@ -1,0 +1,10 @@
+.react-router
+build
+node_modules
+README.md
+.env
+.env.*
+!.env.example
+.git
+.kamal
+config

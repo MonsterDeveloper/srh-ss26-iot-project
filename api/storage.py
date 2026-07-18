@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import boto3
@@ -20,6 +21,7 @@ class ObjectStorage:
         base = dict(region_name=settings.s3_region, aws_access_key_id=settings.s3_access_key_id, aws_secret_access_key=settings.s3_secret_access_key, config=Config(signature_version="s3v4"))
         self.bucket = settings.s3_bucket
         self.ttl = settings.presigned_url_ttl_seconds
+        self.get_ttl = settings.presigned_get_url_ttl_seconds
         self.public = boto3.client("s3", endpoint_url=settings.s3_public_endpoint, **base)
         self.internal = boto3.client("s3", endpoint_url=settings.s3_internal_endpoint, **base)
 
@@ -37,7 +39,7 @@ class ObjectStorage:
             self.internal.head_bucket(Bucket=self.bucket)
         except ClientError:
             self.internal.create_bucket(Bucket=self.bucket)
-        self.internal.put_bucket_cors(Bucket=self.bucket, CORSConfiguration={"CORSRules": [{"AllowedOrigins": origins, "AllowedMethods": ["PUT"], "AllowedHeaders": ["Content-Type"], "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 900}]})
+        self.internal.put_bucket_cors(Bucket=self.bucket, CORSConfiguration={"CORSRules": [{"AllowedOrigins": origins, "AllowedMethods": ["GET", "HEAD", "PUT"], "AllowedHeaders": ["Content-Type", "Range"], "ExposeHeaders": ["ETag", "Accept-Ranges", "Content-Length", "Content-Range"], "MaxAgeSeconds": 900}]})
 
     def head_all(self, manifest: dict) -> dict:
         objects = {}
@@ -69,3 +71,26 @@ class ObjectStorage:
             raise RuntimeError("Could not delete recording objects") from exc
         if response.get("Errors"):
             raise RuntimeError("Could not delete recording objects")
+
+    def upload_artifact(self, key: str, path: Path, content_type: str) -> dict:
+        self.internal.upload_file(str(path), self.bucket, key, ExtraArgs={"ContentType": content_type})
+        head = self.internal.head_object(Bucket=self.bucket, Key=key)
+        return {"key": key, "contentType": content_type, "size": int(head["ContentLength"])}
+
+    def delete_artifacts(self, artifacts: dict) -> None:
+        self.delete_manifest({key: value for key, value in artifacts.items() if isinstance(value, dict) and value.get("key")})
+
+    def media_link(self, item: dict, filename: str) -> dict:
+        try:
+            head = self.internal.head_object(Bucket=self.bucket, Key=item["key"])
+        except (ClientError, BotoCoreError) as exc:
+            raise ValueError("Media object is unavailable") from exc
+        content_type = item.get("contentType") or head.get("ContentType") or "application/octet-stream"
+        disposition = f'attachment; filename="{filename}"'
+        url = self.public.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self.bucket, "Key": item["key"], "ResponseContentType": content_type, "ResponseContentDisposition": disposition},
+            ExpiresIn=self.get_ttl,
+            HttpMethod="GET",
+        )
+        return {"url": url, "expiry": datetime.now(timezone.utc) + timedelta(seconds=self.get_ttl), "filename": filename, "contentType": content_type, "size": int(head["ContentLength"])}

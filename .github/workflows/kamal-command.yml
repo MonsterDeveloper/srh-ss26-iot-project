@@ -35,8 +35,7 @@ jobs:
       RUSTFS_ACCESS_KEY: ${{ secrets.RUSTFS_ACCESS_KEY }}
       RUSTFS_SECRET_KEY: ${{ secrets.RUSTFS_SECRET_KEY }}
       API_BEARER_TOKEN: ${{ secrets.API_BEARER_TOKEN }}
-      API_HOST: ${{ vars.API_HOST }}
-      S3_HOST: ${{ vars.S3_HOST }}
+      DASHBOARD_API_BEARER_TOKEN: ${{ secrets.DASHBOARD_API_BEARER_TOKEN }}
       CORS_ALLOWED_ORIGINS: ${{ vars.CORS_ALLOWED_ORIGINS }}
     steps:
       - uses: actions/checkout@v7.0.0

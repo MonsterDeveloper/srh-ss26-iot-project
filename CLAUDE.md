@@ -1,22 +1,33 @@
-# IoT project
+# IoT & AI Parkinson Study
 
-You are working on a IoT & AI Project that aims to track 3 parameters with Parkinson patients, using a custom built Raspberry Pi Zero setup with 3 sensors:
-- Microphone for voice recording  (output: .wav file)
-- Accelerometer / Gyroscope attached to the leg (.csv)
-- Camera with face recording (.h264)
+This project tests whether wide body movements improve stability and voice in
+people with Parkinson's disease. A Raspberry Pi Zero rig records:
 
-The experiment is as follows: the patient puts on the setup with all sensors, and is asked to walk around 10m while doing some movements with hands and saying the BA sound. The goal of the project is to test the hypothesis that the wide body movements help improve the patient stability and voice.
+- `motion.csv`: accelerometer and gyroscope near the foot
+- `audio.wav`: microphone near the face
+- `video.h264`: face camera
 
-Microphone is located near the face to track: mean loudness, vocal activity ratio, loudness variability, loudness trend.
-Accelerometer is attached to the leg (close to foot) to track step count, cadence, gait regularity, and activity ratio.
-Gyroscope is needed for mean rotation and rotation variability.
-Video: mean mouth opening, mouth opening rate, opening variability, opening trend.
+See `README.md` for architecture, setup, API flows, and deployment details.
 
-Tech Stack:
-- Python with uv (package manager and runner)
-- librosa
-- opencv & mediapipe
-- Pandas
-- Numpy
-- Matplotlib
+## Project-specific guidance
 
+- FastAPI in `api/` is the system of record. PostgreSQL stores experiment and
+  derived data; private source media and derivatives live in RustFS/S3.
+- The reusable extractors are `extract_step_features.py`,
+  `extract_audio_features.py`, and `extract_video_features.py`.
+- `dashboards/` contains local Streamlit inspection tools. The production
+  dashboard is the separate `web-dashboard/` application.
+- Read `web-dashboard/CLAUDE.md` before changing anything in `web-dashboard/`.
+- Add an Alembic migration for database schema changes.
+- API read/export routes return stored results; they must not run extraction.
+- Clearing derived data keeps source objects for retry. Deleting an exercise or
+  experiment also deletes its stored objects.
+- Tests marked `sample` process the real media in `collected_sample_data/`.
+
+Run Python tools through uv. The usual checks are:
+
+```bash
+uv run --group test pytest -ra --tb=short -m "not sample" \
+  --cov=api --cov-branch --cov-report=term-missing
+uv run --group test pytest -ra --tb=short -m sample
+```
